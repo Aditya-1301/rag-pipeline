@@ -65,7 +65,7 @@ def ingest(
 def query(
     question: str = typer.Argument(..., help="Your question"),
     top_k: int = typer.Option(None, help="Override TOP_K"),
-    llm: str = typer.Option(None, help="Use 'openai' to draft with OpenAI if key is set"),
+    llm: str = typer.Option(None, help="LLM backend: 'auto' (default), 'openai', 'ollama', or 'none' (extractive). Overrides LLM_BACKEND env var."),
     max_sources: int = typer.Option(5, help="Max sources to cite/show in the answer"),
 ):
     res = answer_question(question, top_k=top_k, llm=llm, max_sources=max_sources)

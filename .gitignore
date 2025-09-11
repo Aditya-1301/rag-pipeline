@@ -2,3 +2,4 @@
 .rag/
 .venv/
 raglib/__pycache__/
+.env
