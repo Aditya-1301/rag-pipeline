@@ -11,7 +11,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Open `RAG_Attempt.ipynb` in Jupyter or VS Code and run the cells sequentially.
+Open `pipeline.ipynb` in Jupyter or VS Code and run the cells sequentially.
 
 ## Features
 
