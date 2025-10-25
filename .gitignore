@@ -8,3 +8,4 @@ raglib/__pycache__/
 .embed_cache
 deprecated/
 rag_data/
+.gradio/
