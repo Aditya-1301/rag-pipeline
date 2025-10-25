@@ -1,3 +1,4 @@
+# Core dependencies
 typer==0.12.5
 rich==13.9.4
 faiss-cpu==1.12.0
@@ -7,3 +8,18 @@ fastembed>=0.4.0
 python-dotenv==1.0.1
 openai==1.107.0
 requests>=2.32.0
+ollama>=0.3.0
+
+# Document processing
+pymupdf>=1.23.0  # for PDF loading
+python-docx>=0.8.11  # for DOCX loading
+
+# Web interface (for Streamlit app)
+gradio>=4.16.0  # For Gradio demo UI
+sentence-transformers>=2.2.0  # fast local embeddings
+
+# Optional API embeddings
+voyageai>=0.2.0  # Voyage AI embeddings (optional)
+huggingface-hub>=0.21.0  # HuggingFace Inference API (optional)
+tqdm>=4.66.0  # Progress bars
+docx  # legacy import, not needed if python-docx is present

@@ -3,3 +3,8 @@
 .venv/
 raglib/__pycache__/
 .env
+.embedding_cache
+.github/
+.embed_cache
+deprecated/
+rag_data/
