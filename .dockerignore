@@ -41,7 +41,6 @@ rag_data/
 .embedding_cache/
 *.pdf
 *.docx
-*.txt
 Documents/
 
 # Test files
@@ -56,8 +55,6 @@ Jenkinsfile
 
 # Docker
 .dockerignore
-docker-compose*.yml
-Dockerfile*
 
 # Logs
 *.log
@@ -71,3 +68,9 @@ Thumbs.db
 dist/
 build/
 *.egg-info/
+
+# Specifically INCLUDE these important files
+!requirements.txt
+!app.py
+!Dockerfile
+!docker-compose.yml
