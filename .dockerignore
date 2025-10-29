@@ -1,0 +1,73 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebooks (exclude from Docker image)
+.ipynb_checkpoints/
+*.ipynb
+
+# Environment files (use docker-compose env vars instead)
+.env
+.env.local
+
+# Git
+.git/
+.gitignore
+.github/
+
+# Documentation
+*.md
+docs/
+deprecated/
+
+# Large data files (mount as volumes instead)
+rag_data/
+.embedding_cache/
+*.pdf
+*.docx
+*.txt
+Documents/
+
+# Test files
+tests/
+test_*.py
+*_test.py
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+Jenkinsfile
+
+# Docker
+.dockerignore
+docker-compose*.yml
+Dockerfile*
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
