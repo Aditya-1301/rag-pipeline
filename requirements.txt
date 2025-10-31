@@ -23,3 +23,5 @@ voyageai>=0.2.0  # Voyage AI embeddings (optional)
 huggingface-hub>=0.21.0  # HuggingFace Inference API (optional)
 tqdm>=4.66.0  # Progress bars
 docx  # legacy import, not needed if python-docx is present
+
+duckduckgo-search==2.6.1  # Free web search

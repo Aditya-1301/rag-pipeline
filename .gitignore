@@ -8,3 +8,4 @@ deprecated/
 rag_data/
 .gradio/
 .github/copilot-instructions.md
+Codebase_Explanation_Chat.md
