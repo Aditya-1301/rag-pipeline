@@ -40,7 +40,7 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy application code
-COPY . .
+COPY ./app/ .
 
 # Create directories for data persistence
 RUN mkdir -p ./rag_data ./.embedding_cache
