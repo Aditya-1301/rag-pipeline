@@ -61,7 +61,7 @@ jobs:
       contents: read
       packages: write
     outputs:
-      image_tag: ${{ steps.meta.outputs.tags }}
+      image_ref: ${{ steps.image_ref.outputs.image_ref }}
 
     steps:
       - name: Checkout code
@@ -90,6 +90,13 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Capture primary image reference
+        id: image_ref
+        run: |
+          tags="${{ steps.meta.outputs.tags }}"
+          IFS=$'\n' read -r first_tag _ <<< "$tags"
+          echo "image_ref=$first_tag" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -129,16 +136,17 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run Trivy vulnerability scanner
+        id: trivy
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ fromJSON(needs.build.outputs.image_tag)[0] }}
+          image-ref: ${{ needs.build.outputs.image_ref }}
           format: "sarif"
           output: "trivy-results.sarif"
         continue-on-error: true
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('trivy-results.sarif') != ''
         with:
           sarif_file: "trivy-results.sarif"
 
