@@ -9,7 +9,6 @@ from rag_utils import (
     EMBEDDING_DIM,
     DEFAULT_OLLAMA_MODEL,
     _demo_state,
-    gradio_demo,
     load_pdf,
     load_text,
     load_docx,
