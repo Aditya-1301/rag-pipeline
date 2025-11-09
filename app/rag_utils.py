@@ -19,7 +19,16 @@ import faiss
 from ollama import Client
 import gradio as gr
 import socket
-from duckduckgo_search import DDGS
+
+# Handle different duckduckgo_search versions
+try:
+    from duckduckgo_search import DDGS
+except ImportError:
+    try:
+        from duckduckgo_search import AsyncDDGS as DDGS
+    except ImportError:
+        DDGS = None
+        print("⚠️  Warning: duckduckgo_search not available")
 
 
 load_dotenv(override=False)
@@ -856,15 +865,23 @@ def retrieve_documents(query: str, vector_store: VectorStore, metadata_store: Me
 
 def search_web(query: str, num_results: int = 5) -> list[dict]:
     """Search the web and return results."""
+    if DDGS is None:
+        print("⚠️  Web search unavailable: duckduckgo_search not installed")
+        return []
+    
     results = []
-    with DDGS() as ddgs:
-        for r in ddgs.text(query, region='us-en', max_results=num_results):
-            results.append({
-                "text": r.get('body', ''),
-                "source": r.get('title', ''),
-                "url": r.get('link', r.get('url', r.get('href', ''))),
-                "page": None  # No page number for web results
-            })
+    try:
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, region='us-en', max_results=num_results):
+                results.append({
+                    "text": r.get('body', ''),
+                    "source": r.get('title', ''),
+                    "url": r.get('link', r.get('url', r.get('href', ''))),
+                    "page": None  # No page number for web results
+                })
+    except Exception as e:
+        print(f"⚠️  Web search failed: {e}")
+        return []
     return results
 
 
