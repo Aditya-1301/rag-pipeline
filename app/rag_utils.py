@@ -85,6 +85,9 @@ TOKEN_LIMIT_BASE = 512          # Minimum tokens for answer generation
 TOKEN_LIMIT_PER_SOURCE = 200    # Additional tokens per source (for citations, context)
 TOKEN_LIMIT_MAX = 2048          # Absolute maximum to prevent runaway responses
 
+# Web Search Configuration
+ENABLE_WEB_SEARCH = os.getenv("ENABLE_WEB_SEARCH", "false").lower() in ("true", "1", "yes")
+
 # LLM Backend Configuration
 LLM_BACKEND = os.getenv("LLM_BACKEND", "auto")  # Options: auto, ollama, huggingface, openai, none
 
@@ -896,14 +899,37 @@ def search_web(query: str, num_results: int = 5) -> list[dict]:
 
 
 def retrieve_documents_hybrid(query: str, vector_store, metadata_store, 
-                              k_local: int = 3, k_web: int = 2):
-    """Retrieve from both local docs and web."""
+                              k_local: int = 3, k_web: int = 2, enable_web: bool = None):
+    """
+    Retrieve from both local docs and web (optional).
+    
+    Args:
+        query: Search query
+        vector_store: Vector store for local search
+        metadata_store: Metadata store for local search
+        k_local: Number of local results to retrieve
+        k_web: Number of web results to retrieve (if web search enabled)
+        enable_web: Override web search setting (None = auto-detect DDGS availability)
+    """
     
     # Local retrieval (existing code)
     local_chunks = retrieve_documents(query, vector_store, metadata_store, k=k_local)
     
-    # Web search
+    # Determine if web search should be used
+    if enable_web is None:
+        # Auto-detect: only use web if DDGS is available
+        enable_web = (DDGS is not None)
+    
+    if not enable_web or k_web <= 0:
+        # Web search disabled or not requested
+        return local_chunks
+    
+    # Web search (only if enabled and available)
     web_results = search_web(query, num_results=k_web)
+    
+    if not web_results:
+        # No web results (search failed or unavailable)
+        return local_chunks
     
     # Convert web results to DocumentChunk format
     web_chunks = [
@@ -1272,7 +1298,19 @@ def execute_query(query: str, vector_store: VectorStore, metadata_store: Metadat
         print(f"📖 Query: {query}")
     
     # Retrieve documents
-    retrieved_chunks = retrieve_documents_hybrid(query, vector_store, metadata_store, k_local=top_k//2, k_web=top_k//2) # retrieve_documents(query, vector_store, metadata_store, k=top_k)
+    # Use hybrid search only if web search is enabled AND available
+    enable_web = ENABLE_WEB_SEARCH and (DDGS is not None)
+    
+    if enable_web:
+        # Hybrid: split between local and web
+        retrieved_chunks = retrieve_documents_hybrid(
+            query, vector_store, metadata_store, 
+            k_local=top_k//2, k_web=top_k//2, enable_web=True
+        )
+    else:
+        # Local-only retrieval
+        retrieved_chunks = retrieve_documents(query, vector_store, metadata_store, k=top_k)
+    
     if verbose:
         print(f"✓ Retrieved {len(retrieved_chunks)} relevant chunks")
     
