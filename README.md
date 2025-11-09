@@ -26,7 +26,11 @@ A **production-ready Retrieval-Augmented Generation** system built as an interac
 - **Smart Embedding Caching**: Detects precomputed embeddings, skips redundant API calls
 - **Parallel Processing**: Multi-threaded API calls for 5-10x speedup
 - **Vector Search**: Cosine similarity (FAISS IndexFlatIP) with L2 normalization
-- **Local LLM Answering**: Ollama integration (gemma3, smollm2, gpt-oss)
+- **Multi-Backend LLM Support**:
+  - 🤗 **HuggingFace Inference API** (Mistral, Llama, etc.) — Recommended for HF Spaces
+  - 🦙 **Ollama** (local models: gemma3, smollm2, gpt-oss)
+  - 🌐 **OpenAI** (GPT-4, GPT-3.5)
+  - 🔄 **Auto-detection**: Automatically uses available backend
 - **Interactive UI**: Gradio demo with auto port detection
 - **Source Citations**: Formatted answers with [1], [2] citations + source details
 - **Persistence**: Save/load vector store and metadata (no reprocessing!)
@@ -65,23 +69,45 @@ cp .env.example .env
 ### Environment Variables (`.env`):
 
 ```bash
-# Embedding Backend (choose one)
-EMBEDDING_METHOD=huggingface        # Options: "huggingface" (FREE), "voyage", "openai", "fastembed"
+# ===== LLM Backend (Answer Generation) =====
+LLM_BACKEND=auto                    # Options: "auto", "huggingface", "ollama", "openai", "none"
+
+# HuggingFace Inference API (recommended for HF Spaces - FREE!)
 HF_TOKEN=hf_your_token_here         # Get free token: https://huggingface.co/settings/tokens
+HF_LLM_MODEL=HuggingFaceTB/SmolLM2-360M-Instruct  # CPU-friendly! Or: mistralai/Mistral-7B-Instruct-v0.2
 
-# Optional: Cloud embeddings
-VOYAGE_API_KEY=pa_your_key          # Voyage AI (fastest, paid)
-OPENAI_API_KEY=sk_your_key          # OpenAI (fast, paid)
+# OpenAI (alternative)
+OPENAI_API_KEY=sk_your_key
+OPENAI_MODEL=gpt-4o-mini
 
-# Local LLM via Ollama
+# Local Ollama (alternative - requires local server)
 OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=smollm2:360m           # Or: gemma3:270m, gpt-oss:20b (cloud)
-OLLAMA_API_KEY=optional_for_cloud   # Required only for cloud models
+OLLAMA_MODEL=smollm2:360m           # Or: gemma3:270m
 
-# Document Processing
+# ===== Embedding Backend =====
+EMBEDDING_BACKEND=fastembed         # Options: "fastembed" (local), "huggingface", "openai"
+FASTEMBED_MODEL=BAAI/bge-small-en-v1.5
+
+# ===== Document Processing =====
 CHUNK_SIZE=1000                     # Characters per chunk
-CHUNK_OVERLAP=200                   # Character overlap between chunks
+CHUNK_OVERLAP=200                   # Character overlap
 TOP_K=5                             # Number of sources to retrieve
+```
+
+### Recommended Configurations:
+
+**For HuggingFace Spaces (Cloud):**
+```bash
+LLM_BACKEND=huggingface
+HF_TOKEN=your_token_here
+EMBEDDING_BACKEND=fastembed  # Fast, no API calls
+```
+
+**For Local Development:**
+```bash
+LLM_BACKEND=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+EMBEDDING_BACKEND=fastembed
 ```
 
 ## Quickstart

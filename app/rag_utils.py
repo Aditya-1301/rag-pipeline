@@ -96,7 +96,7 @@ OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", None)  # Required for cloud models
 client = Client(host=OLLAMA_BASE_URL)
 
 # HuggingFace Inference API for LLM
-HF_LLM_MODEL = os.getenv("HF_LLM_MODEL", "mistralai/Mistral-7B-Instruct-v0.2")
+HF_LLM_MODEL = os.getenv("HF_LLM_MODEL", "HuggingFaceTB/SmolLM2-360M-Instruct")
 hf_llm_client = None
 if HF_AVAILABLE and HF_TOKEN:
     hf_llm_client = InferenceClient(token=HF_TOKEN)
