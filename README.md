@@ -1,3 +1,15 @@
+---
+title: Simple RAG Pipeline
+emoji: 🔍
+colorFrom: blue
+colorTo: purple
+sdk: gradio
+sdk_version: "5.0.0"
+app_file: app/app.py
+pinned: false
+license: mit
+---
+
 # RAG Pipeline - Jupyter Notebook (FAISS + Multi-Backend Embeddings)
 
 A **production-ready Retrieval-Augmented Generation** system built as an interactive Jupyter notebook (`RAG_Attempt.ipynb`) with:
@@ -199,7 +211,7 @@ rag_data/                  # Generated data (created after first run)
   └─ .embedding_cache/     # File-based embedding cache
 ```
 
-## Next Steps 
+## Next Steps
 
 1. **Query Caching**: Cache popular Q&A pairs
 2. **Re-ranking**: Add cross-encoders for better retrieval
