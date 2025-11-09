@@ -85,12 +85,22 @@ TOKEN_LIMIT_BASE = 512          # Minimum tokens for answer generation
 TOKEN_LIMIT_PER_SOURCE = 200    # Additional tokens per source (for citations, context)
 TOKEN_LIMIT_MAX = 2048          # Absolute maximum to prevent runaway responses
 
+# LLM Backend Configuration
+LLM_BACKEND = os.getenv("LLM_BACKEND", "auto")  # Options: auto, ollama, huggingface, openai, none
+
 # Local LLMs via Ollama
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "smollm2:360m")
 OLLAMA_MODEL_CLOUD = os.getenv("OLLAMA_MODEL_CLOUD", "gpt-oss:20b-cloud")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", None)  # Required for cloud models
 client = Client(host=OLLAMA_BASE_URL)
+
+# HuggingFace Inference API for LLM
+HF_LLM_MODEL = os.getenv("HF_LLM_MODEL", "mistralai/Mistral-7B-Instruct-v0.2")
+hf_llm_client = None
+if HF_AVAILABLE and HF_TOKEN:
+    hf_llm_client = InferenceClient(token=HF_TOKEN)
+
 # print(f"Using Ollama model: {OLLAMA_MODEL_CLOUD}")
 # print(f"OLLAMA_API_KEY configured: {bool(OLLAMA_API_KEY)}")
 
@@ -916,18 +926,43 @@ except NameError:
     client = Client(host=OLLAMA_BASE_URL)
 
 
-def generate_answer(query: str, retrieved_chunks: list, model_name: str = None, stream: bool = False):
+def generate_answer(query: str, retrieved_chunks: list, model_name: str = None, stream: bool = False, backend: str = None):
     """
-    Generate an answer from Ollama or Ollama cloud, with defensive checks.
+    Generate an answer using configured LLM backend (Ollama, HuggingFace, or OpenAI).
 
     - Handles None chunk.text
     - Validates cloud API key before using cloud model
-    - Uses == for string comparison
+    - Supports multiple backends: ollama, huggingface, openai
     - Supports stream flag if the client and model support streaming
     - Dynamically adjusts token limit based on number of sources
+    
+    Args:
+        query: User's question
+        retrieved_chunks: List of relevant document chunks
+        model_name: Override model name (optional)
+        stream: Enable streaming response (optional)
+        backend: Override backend (ollama, huggingface, openai, or None for auto)
     """
+    # Determine backend
+    if backend is None:
+        backend = LLM_BACKEND
+    
+    if backend == "auto":
+        # Auto-detect: prefer HF if token available, fallback to Ollama
+        if HF_AVAILABLE and HF_TOKEN and hf_llm_client:
+            backend = "huggingface"
+        elif OPENAI_AVAILABLE and OPENAI_API_KEY:
+            backend = "openai"
+        else:
+            backend = "ollama"
+    
     if model_name is None:
-        model_name = os.getenv("OLLAMA_MODEL", "smollm2:360m")
+        if backend == "huggingface":
+            model_name = HF_LLM_MODEL
+        elif backend == "openai":
+            model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        else:  # ollama
+            model_name = os.getenv("OLLAMA_MODEL", "smollm2:360m")
 
     # Build context lines safely
     context_lines = []
@@ -951,8 +986,93 @@ def generate_answer(query: str, retrieved_chunks: list, model_name: str = None, 
         TOKEN_LIMIT_MAX
     )
     
-    print(f"[LLM Config] Sources: {num_sources} | Max tokens: {num_predict}")
+    print(f"[LLM Config] Backend: {backend} | Model: {model_name} | Sources: {num_sources} | Max tokens: {num_predict}")
 
+    # ===== HuggingFace Inference API Backend =====
+    if backend == "huggingface":
+        if not (HF_AVAILABLE and HF_TOKEN and hf_llm_client):
+            return "❌ Error: HuggingFace backend requested but HF_TOKEN not configured or huggingface_hub not installed."
+        
+        try:
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user},
+            ]
+            
+            # Use HF Inference API
+            response = hf_llm_client.chat_completion(
+                messages=messages,
+                model=model_name,
+                max_tokens=num_predict,
+                temperature=0.2,
+                stream=stream
+            )
+            
+            if stream:
+                # Handle streaming response
+                full_text = ""
+                try:
+                    for chunk in response:
+                        delta = chunk.choices[0].delta.content
+                        if delta:
+                            print(delta, end="", flush=True)
+                            full_text += delta
+                    print()
+                    return full_text.strip()
+                except Exception as stream_err:
+                    print(f"\n⚠️  Streaming failed: {stream_err}")
+                    # Fallback: try non-streaming
+                    response = hf_llm_client.chat_completion(
+                        messages=messages,
+                        model=model_name,
+                        max_tokens=num_predict,
+                        temperature=0.2
+                    )
+            
+            # Non-streaming response
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            return f"❌ Error with HuggingFace Inference API: {e}"
+    
+    # ===== OpenAI Backend =====
+    elif backend == "openai":
+        if not (OPENAI_AVAILABLE and OPENAI_API_KEY):
+            return "❌ Error: OpenAI backend requested but OPENAI_API_KEY not configured."
+        
+        try:
+            from openai import OpenAI
+            openai_client = OpenAI(api_key=OPENAI_API_KEY)
+            
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user},
+            ]
+            
+            response = openai_client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=num_predict,
+                temperature=0.2,
+                stream=stream
+            )
+            
+            if stream:
+                full_text = ""
+                for chunk in response:
+                    if chunk.choices[0].delta.content:
+                        delta = chunk.choices[0].delta.content
+                        print(delta, end="", flush=True)
+                        full_text += delta
+                print()
+                return full_text.strip()
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            return f"❌ Error with OpenAI API: {e}"
+    
+    # ===== Ollama Backend (default) =====
     # Decide which client to use
     # If using cloud model name, ensure API key exists
     if model_name == OLLAMA_MODEL_CLOUD:
@@ -1125,7 +1245,7 @@ def extract_content(resp):
 
 
 def execute_query(query: str, vector_store: VectorStore, metadata_store: MetadataStore, 
-                 model_name: str = None, top_k: int = None, verbose: bool = True) -> dict:
+                 model_name: str = None, top_k: int = None, verbose: bool = True, backend: str = None) -> dict:
     """
     End-to-end query execution: retrieve documents → generate answer → format with sources.
     
@@ -1133,9 +1253,10 @@ def execute_query(query: str, vector_store: VectorStore, metadata_store: Metadat
         query: User's question
         vector_store: Loaded FAISS vector store
         metadata_store: Loaded metadata store
-        model_name: LLM model to use (defaults to DEFAULT_OLLAMA_MODEL)
+        model_name: LLM model to use (defaults based on backend)
         top_k: Number of chunks to retrieve (defaults to DOCUMENT_CONFIG["top_k"])
         verbose: Print progress messages
+        backend: LLM backend to use (ollama, huggingface, openai, auto, or None)
     
     Returns:
         dict with keys: "query", "answer", "formatted_answer", "retrieved_chunks"
@@ -1144,6 +1265,8 @@ def execute_query(query: str, vector_store: VectorStore, metadata_store: Metadat
         model_name = DEFAULT_OLLAMA_MODEL
     if top_k is None:
         top_k = DOCUMENT_CONFIG["top_k"]
+    if backend is None:
+        backend = LLM_BACKEND
     
     if verbose:
         print(f"📖 Query: {query}")
@@ -1155,9 +1278,9 @@ def execute_query(query: str, vector_store: VectorStore, metadata_store: Metadat
     
     # Generate answer
     if verbose:
-        print(f"Generating answer with model: {model_name}")
+        print(f"Generating answer with backend: {backend}, model: {model_name}")
     
-    raw_response = generate_answer(query, retrieved_chunks, model_name=model_name, stream=False)
+    raw_response = generate_answer(query, retrieved_chunks, model_name=model_name, stream=False, backend=backend)
     answer_text = extract_content(raw_response)
     
     # Format with sources
