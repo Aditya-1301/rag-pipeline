@@ -7,7 +7,7 @@ from rag_utils import (
     DOCUMENT_CONFIG,
     TOKEN_CONFIG,
     EMBEDDING_DIM,
-    DEFAULT_OLLAMA_MODEL,
+    DEFAULT_MODEL,
     _demo_state,
     load_pdf,
     load_text,
@@ -225,7 +225,7 @@ def rag_demo_interface(query: str, top_k: int = 5, model: str = None) -> str:
         
         # Use default model if not specified
         if model is None or model.strip() == "":
-            model = DEFAULT_OLLAMA_MODEL
+            model = DEFAULT_MODEL
         
         # Execute query with user-specified parameters
         vs = _demo_state["vector_store"]
@@ -261,7 +261,7 @@ def create_gradio_demo():
         # 📚 RAG Q&A Assistant with Multi-Document Support
         
         Upload your documents and ask questions using semantic search + local LLM.
-        **Powered by:** FAISS + Ollama + HuggingFace Embeddings
+        **Powered by:** FAISS + Local Transformers (SmolLM2-135M) + FastEmbed
         """)
         
         with gr.Tabs():
@@ -325,7 +325,7 @@ def create_gradio_demo():
                         
                         model_dropdown = gr.Textbox(
                             label="🤖 Model (optional)",
-                            value=DEFAULT_OLLAMA_MODEL,
+                            value=DEFAULT_MODEL,
                             placeholder="Leave blank for default",
                             interactive=True
                         )
@@ -369,7 +369,7 @@ def create_gradio_demo():
                 ### ℹ️ How It Works
                 1. **Query Processing**: Your question is converted to embeddings
                 2. **Semantic Search**: Top-K most relevant chunks are retrieved from documents
-                3. **LLM Generation**: Local Ollama model generates answer based on retrieved chunks
+                3. **LLM Generation**: Local transformers model (SmolLM2-135M) generates answer based on retrieved chunks
                 4. **Source Citation**: Answer includes [1], [2] citations linked to source documents
                 
                 ### 🚀 Performance

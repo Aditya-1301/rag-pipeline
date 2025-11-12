@@ -1,15 +1,8 @@
 from dotenv import load_dotenv
 import os, json
-from gradio_client import Client
 import numpy as np
 import faiss
 from fastembed import TextEmbedding
-try:
-    from ollama import Client as OllamaClient
-    OLLAMA_AVAILABLE = True
-except ImportError:
-    OllamaClient = None  # type: ignore
-    OLLAMA_AVAILABLE = False
 from tqdm.auto import tqdm
 import pickle
 import hashlib
@@ -24,6 +17,14 @@ import uuid
 import faiss
 import gradio as gr
 import socket
+
+# Import transformers for local LLM inference
+try:
+    from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+    print("⚠️  transformers not available - install with: pip install transformers torch")
 
 # Handle different duckduckgo_search versions
 try:
@@ -93,34 +94,27 @@ TOKEN_LIMIT_MAX = 2048          # Absolute maximum to prevent runaway responses
 # Web Search Configuration
 ENABLE_WEB_SEARCH = os.getenv("ENABLE_WEB_SEARCH", "false").lower() in ("true", "1", "yes")
 
-# LLM Backend Configuration
-# Smart default: use 'auto' to auto-detect available backends
-# This prevents hard-coding 'huggingface' when HF_TOKEN might not be set
-LLM_BACKEND = os.getenv("LLM_BACKEND", "auto")  # Options: huggingface, openai, ollama, auto, none
+# LLM Backend Configuration - LOCAL TRANSFORMERS ONLY
+LLM_BACKEND = "transformers"  # Using local transformers for CPU inference
 
-# Local LLMs via Ollama
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "smollm2:360m")
-OLLAMA_MODEL_CLOUD = os.getenv("OLLAMA_MODEL_CLOUD", "gpt-oss:20b-cloud")
-OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", None)  # Required for cloud models
+# Local HuggingFace Transformers Model (tiny model for CPU)
+HF_LLM_MODEL = os.getenv("HF_LLM_MODEL", "HuggingFaceTB/SmolLM2-135M-Instruct")
 
-client: Optional[OllamaClient] = None
-if OLLAMA_AVAILABLE:
+# Initialize local transformers pipeline
+llm_pipeline = None
+if TRANSFORMERS_AVAILABLE:
     try:
-        client = OllamaClient(host=OLLAMA_BASE_URL)
-    except Exception as ollama_init_error:
-        print(f"⚠️  Ollama client unavailable: {ollama_init_error}")
-        client = None
-
-# HuggingFace Inference API for LLM
-HF_LLM_MODEL = os.getenv("HF_LLM_MODEL", "meta-llama/Llama-3.2-1B-Instruct")
-hf_llm_client: Optional[InferenceClient] = None
-if HF_AVAILABLE:
-    try:
-        hf_llm_client = InferenceClient(api_key=HF_TOKEN)
-    except Exception as hf_client_error:
-        print(f"⚠️  Hugging Face LLM client unavailable: {hf_client_error}")
-        hf_llm_client = None
+        print(f"⏳ Loading {HF_LLM_MODEL} for local CPU inference...")
+        llm_pipeline = pipeline(
+            "text-generation",
+            model=HF_LLM_MODEL,
+            device="cpu",  # CPU only for HF Spaces
+            torch_dtype="auto",
+        )
+        print(f"✅ Model loaded successfully!")
+    except Exception as e:
+        print(f"⚠️  Failed to load transformers model: {e}")
+        llm_pipeline = None
 
 # print(f"Using Ollama model: {OLLAMA_MODEL_CLOUD}")
 # print(f"OLLAMA_API_KEY configured: {bool(OLLAMA_API_KEY)}")
@@ -171,11 +165,9 @@ DOCUMENT_CONFIG = {
     "top_k": 5,
 }
 
-# Model Config
+# Model Config - LOCAL TRANSFORMERS ONLY
 MODEL_CONFIG = {
-    "ollama_local": os.getenv("OLLAMA_MODEL", "smollm2:360m"),
-    "ollama_cloud": os.getenv("OLLAMA_MODEL_CLOUD", "gpt-oss:20b-cloud"),
-    "api_key": os.getenv("OLLAMA_API_KEY", None),
+    "local_model": HF_LLM_MODEL,
 }
 
 # LLM Response Token Limits
@@ -183,13 +175,13 @@ MODEL_CONFIG = {
 # More sources = more tokens allowed (for proper citations)
 # Formula: max_tokens = min(BASE + (num_sources * PER_SOURCE), MAX)
 TOKEN_CONFIG = {
-    "base": 512,           # Minimum tokens for answer generation (was 256, now 512)
-    "per_source": 200,     # Additional tokens per source for citations (~3-5 per citation)
-    "max": 2048,           # Absolute maximum to prevent runaway responses
+    "base": 256,           # Reduced for smaller model (was 512)
+    "per_source": 100,     # Reduced for smaller model (was 200)
+    "max": 512,            # Reduced for smaller model (was 2048)
 }
 
-# Select model: prefer cloud if API key available, else local
-DEFAULT_OLLAMA_MODEL = MODEL_CONFIG["ollama_cloud"] if MODEL_CONFIG["api_key"] else MODEL_CONFIG["ollama_local"]
+# Default model name
+DEFAULT_MODEL = HF_LLM_MODEL
 
 # Global state for UI demos (initialized once)
 _demo_state = {
@@ -988,52 +980,26 @@ except NameError:
 
 def generate_answer(query: str, retrieved_chunks: list, model_name: str = None, stream: bool = False, backend: str = None, verbose: bool = False):
     """
-    Generate an answer using configured LLM backend (Ollama, HuggingFace, or OpenAI).
+    Generate an answer using local HuggingFace transformers (CPU inference).
 
-    - Handles None chunk.text
-    - Validates cloud API key before using cloud model
-    - Supports multiple backends: ollama, huggingface, openai
-    - Supports stream flag if the client and model support streaming
+    - Uses tiny SmolLM2-135M model for fast CPU inference
+    - Handles None chunk.text safely
     - Dynamically adjusts token limit based on number of sources
     
     Args:
         query: User's question
         retrieved_chunks: List of relevant document chunks
-        model_name: Override model name (optional)
-        stream: Enable streaming response (optional)
-        backend: Override backend (ollama, huggingface, openai, or None for auto)
+        model_name: Override model name (optional, ignored - uses local model)
+        stream: Enable streaming response (optional, not supported for transformers)
+        backend: Override backend (optional, ignored - uses transformers)
         verbose: Print backend selection info (optional)
     """
-    # Determine backend
-    if backend is None:
-        backend = LLM_BACKEND
+    # Check if transformers pipeline is available
+    if llm_pipeline is None:
+        return "❌ Error: Local transformers model not loaded. Please install transformers and torch."
     
-    if backend == "auto":
-        # Auto-detect: prefer HF if available, then OpenAI, finally Ollama
-        # CRITICAL: Check if client is actually initialized (not None), not just if library is available
-        if hf_llm_client is not None:
-            backend = "huggingface"
-            if verbose:
-                print("✓ Auto-detected backend: HuggingFace Inference API")
-        elif OPENAI_AVAILABLE and OPENAI_API_KEY:
-            backend = "openai"
-            if verbose:
-                print("✓ Auto-detected backend: OpenAI")
-        elif client is not None:
-            # Only use Ollama if client was successfully initialized
-            backend = "ollama"
-            if verbose:
-                print("✓ Auto-detected backend: Ollama (local)")
-        else:
-            return "❌ Error: No LLM backend available. Please configure HF_TOKEN, OPENAI_API_KEY, or ensure Ollama is running."
-    
-    if model_name is None:
-        if backend == "huggingface":
-            model_name = HF_LLM_MODEL
-        elif backend == "openai":
-            model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        else:  # ollama
-            model_name = os.getenv("OLLAMA_MODEL", "smollm2:360m")
+    if verbose:
+        print(f"✓ Using local transformers model: {HF_LLM_MODEL}")
 
     # Build context lines safely
     context_lines = []
@@ -1045,200 +1011,53 @@ def generate_answer(query: str, retrieved_chunks: list, model_name: str = None, 
             chunk_text = ""
         else:
             chunk_text = str(chunk_text_raw)
-        # trim to avoid sending too much
-        context_lines.append(f"[{i}] {src}:\n{chunk_text[:800]}")
+        # trim to avoid sending too much (smaller chunks for tiny model)
+        context_lines.append(f"[{i}] {src}:\n{chunk_text[:400]}")
 
-    user = f"Question: {query}\n\nSources:\n" + "\n\n".join(context_lines) + "\n\nAnswer:"
+    # Build prompt for transformers
+    context = "\n\n".join(context_lines)
+    prompt = f"""{SYSTEM_PROMPT}
+
+Sources:
+{context}
+
+Question: {query}
+
+Answer:"""
 
     # Calculate dynamic token limit based on number of sources
     num_sources = len(retrieved_chunks)
-    num_predict = min(
+    max_new_tokens = min(
         TOKEN_LIMIT_BASE + (num_sources * TOKEN_LIMIT_PER_SOURCE),
         TOKEN_LIMIT_MAX
     )
     
-    print(f"[LLM Config] Backend: {backend} | Model: {model_name} | Sources: {num_sources} | Max tokens: {num_predict}")
+    print(f"[LLM Config] Backend: transformers | Model: {HF_LLM_MODEL} | Sources: {num_sources} | Max tokens: {max_new_tokens}")
 
-    # ===== HuggingFace Inference API Backend =====
-    if backend == "huggingface":
-        if not (HF_AVAILABLE and hf_llm_client is not None):
-            return "❌ Error: HuggingFace backend requested but huggingface_hub is unavailable or HF_TOKEN is missing. Set an HF token in the environment."
-        
-        try:
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user},
-            ]
-            
-            # Compatibility layer: try new API first, fall back to old API
-            def invoke_hf(messages, model, max_tokens, temperature, stream=False):
-                """Try both new and old HuggingFace API methods."""
-                try:
-                    # Try new API (chat.completions.create)
-                    if hasattr(hf_llm_client, 'chat') and hasattr(hf_llm_client.chat, 'completions'):
-                        return hf_llm_client.chat.completions.create(
-                            messages=messages,
-                            model=model,
-                            max_tokens=max_tokens,
-                            temperature=temperature,
-                            stream=stream
-                        )
-                except (AttributeError, Exception):
-                    pass
-                
-                # Fall back to old API (chat_completion)
-                return hf_llm_client.chat_completion(
-                    messages=messages,
-                    model=model,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    stream=stream
-                )
-            
-            # Use HF Inference API with compatibility layer
-            response = invoke_hf(
-                messages=messages,
-                model=model_name,
-                max_tokens=num_predict,
-                temperature=0.2,
-                stream=stream
-            )
-            
-            if stream:
-                # Handle streaming response
-                full_text = ""
-                try:
-                    for chunk in response:
-                        delta = chunk.choices[0].delta.content
-                        if delta:
-                            print(delta, end="", flush=True)
-                            full_text += delta
-                    print()
-                    return full_text.strip()
-                except Exception as stream_err:
-                    print(f"\n⚠️  Streaming failed: {stream_err}")
-                    # Fallback: try non-streaming
-                    response = invoke_hf(
-                        messages=messages,
-                        model=model_name,
-                        max_tokens=num_predict,
-                        temperature=0.2,
-                        stream=False
-                    )
-            
-            # Non-streaming response
-            return response.choices[0].message.content.strip()
-            
-        except Exception as e:
-            return f"❌ Error with HuggingFace Inference API: {e}"
-    
-    # ===== OpenAI Backend =====
-    elif backend == "openai":
-        if not (OPENAI_AVAILABLE and OPENAI_API_KEY):
-            return "❌ Error: OpenAI backend requested but OPENAI_API_KEY not configured."
-        
-        try:
-            from openai import OpenAI
-            openai_client = OpenAI(api_key=OPENAI_API_KEY)
-            
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user},
-            ]
-            
-            response = openai_client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                max_tokens=num_predict,
-                temperature=0.2,
-                stream=stream
-            )
-            
-            if stream:
-                full_text = ""
-                for chunk in response:
-                    if chunk.choices[0].delta.content:
-                        delta = chunk.choices[0].delta.content
-                        print(delta, end="", flush=True)
-                        full_text += delta
-                print()
-                return full_text.strip()
-            
-            return response.choices[0].message.content.strip()
-            
-        except Exception as e:
-            return f"❌ Error with OpenAI API: {e}"
-    
-    # ===== Ollama Backend (default) =====
-    # Check if Ollama client is available
-    if client is None:
-        return "❌ Error: Ollama backend requested but Ollama is not running or accessible. Please start Ollama or use a different backend (HuggingFace or OpenAI)."
-    
-    # Decide which client to use
-    # If using cloud model name, ensure API key exists
-    if model_name == OLLAMA_MODEL_CLOUD:
-        if not OLLAMA_API_KEY:
-            return "❌ Error: OLLAMA_API_KEY is not set but cloud model was requested. Set OLLAMA_API_KEY or use the local model."
-        # create a client configured for cloud (keep default client for local)
-        try:
-            cloud_client = Client(host="https://ollama.com", headers={"Authorization": "Bearer " + OLLAMA_API_KEY})
-            chosen_client = cloud_client
-        except Exception as e:
-            return f"❌ Error: Could not connect to Ollama cloud: {e}"
-    else:
-        chosen_client = client
-
-    # Prepare messages
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user},
-    ]
-
-    # Try streaming if requested and the client supports it
+    # ===== Local Transformers Generation =====
     try:
-        if stream:
-            # Some clients support streaming via `stream=True` or a stream() method
-            # We'll attempt a streaming call but fall back to non-streaming safely
-            resp_stream = chosen_client.chat(model=model_name, messages=messages, stream=True, options={"temperature": 0.2, "num_predict": num_predict})
-            # If resp_stream is an iterator of chunks/dicts, iterate and concatenate
-            full_text = ""
-            try:
-                for part in resp_stream:
-                    # Some streaming responses yield dicts with 'message' -> 'content'
-                    if isinstance(part, dict) and "message" in part and isinstance(part["message"], dict):
-                        delta = part["message"].get("content", "")
-                    elif isinstance(part, str):
-                        delta = part
-                    else:
-                        delta = ""
-                    print(delta, end="", flush=True)
-                    full_text += delta
-                print()
-                return full_text.strip()
-            except TypeError:
-                # Not iterable; fall back
-                pass
-
-        # Non-streaming call (or fallback)
-        resp = chosen_client.chat(model=model_name, messages=messages, options={"temperature": 0.2, "num_predict": num_predict})
-        # resp may be a dict like {'message': {'content': '...'}}
-        if isinstance(resp, dict):
-            message = resp.get("message")
-            if isinstance(message, dict):
-                return message.get("content", "").strip()
-            # sometimes response might be {'content': '...'}
-            return resp.get("content", "").strip()
-
-        # If resp is a string, return it
-        if isinstance(resp, str):
-            return resp.strip()
-
-        # Unknown shape
-        return str(resp)
-
+        # Generate answer using transformers pipeline
+        outputs = llm_pipeline(
+            prompt,
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=0.7,
+            top_p=0.9,
+            pad_token_id=llm_pipeline.tokenizer.eos_token_id,
+            return_full_text=False,  # Only return generated text, not input prompt
+        )
+        
+        # Extract generated text
+        generated_text = outputs[0]['generated_text'].strip()
+        
+        # Clean up the output (remove any repeated prompt text)
+        if "Answer:" in generated_text:
+            generated_text = generated_text.split("Answer:")[-1].strip()
+        
+        return generated_text
+        
     except Exception as e:
-        # Don't raise raw exceptions to the user; return a helpful message
-        return f"Error generating answer: {e}"
+        return f"❌ Error generating answer with transformers: {e}"
 
 
 def format_answer_with_sources(answer_text: str, retrieved_chunks: list) -> str:
@@ -1366,7 +1185,7 @@ def execute_query(query: str, vector_store: VectorStore, metadata_store: Metadat
         dict with keys: "query", "answer", "formatted_answer", "retrieved_chunks"
     """
     if model_name is None:
-        model_name = DEFAULT_OLLAMA_MODEL
+        model_name = DEFAULT_MODEL
     if top_k is None:
         top_k = DOCUMENT_CONFIG["top_k"]
     if backend is None:
