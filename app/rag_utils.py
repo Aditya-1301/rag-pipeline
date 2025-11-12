@@ -98,7 +98,7 @@ ENABLE_WEB_SEARCH = os.getenv("ENABLE_WEB_SEARCH", "false").lower() in ("true", 
 LLM_BACKEND = "transformers"  # Using local transformers for CPU inference
 
 # Local HuggingFace Transformers Model (tiny model for CPU)
-HF_LLM_MODEL = os.getenv("HF_LLM_MODEL", "HuggingFaceTB/SmolLM2-135M-Instruct")
+HF_LLM_MODEL = os.getenv("HF_LLM_MODEL", "HuggingFaceTB/SmolLM2-360M-Instruct")
 
 # Initialize local transformers pipeline
 llm_pipeline = None
@@ -175,9 +175,9 @@ MODEL_CONFIG = {
 # More sources = more tokens allowed (for proper citations)
 # Formula: max_tokens = min(BASE + (num_sources * PER_SOURCE), MAX)
 TOKEN_CONFIG = {
-    "base": 256,           # Reduced for smaller model (was 512)
-    "per_source": 100,     # Reduced for smaller model (was 200)
-    "max": 512,            # Reduced for smaller model (was 2048)
+    "base": 384,           # Increased for 360M model (was 256 for 135M)
+    "per_source": 128,     # Increased for 360M model (was 100 for 135M)
+    "max": 768,            # Increased for 360M model (was 512 for 135M)
 }
 
 # Default model name
@@ -982,7 +982,7 @@ def generate_answer(query: str, retrieved_chunks: list, model_name: str = None, 
     """
     Generate an answer using local HuggingFace transformers (CPU inference).
 
-    - Uses tiny SmolLM2-135M model for fast CPU inference
+    - Uses tiny SmolLM2-360M model for fast CPU inference
     - Handles None chunk.text safely
     - Dynamically adjusts token limit based on number of sources
     
