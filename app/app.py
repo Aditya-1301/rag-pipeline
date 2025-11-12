@@ -593,6 +593,17 @@ if __name__ == "__main__":
     print("=" * 70)
     print("🚀 Starting Gradio RAG Demo...")
     print("=" * 70)
+    
+    # Check LLM backend configuration
+    llm_backend = os.getenv("LLM_BACKEND", "auto")
+    hf_token = os.getenv("HF_TOKEN")
+    
+    if llm_backend in ("auto", "huggingface") and not hf_token:
+        print("\n⚠️  WARNING: HF_TOKEN not set!")
+        print("   For HuggingFace Spaces, please add your HF token as a secret:")
+        print("   Settings → Repository secrets → Add new secret")
+        print("   Name: HF_TOKEN, Value: <your_token>")
+        print("\n   Or set LLM_BACKEND=openai and provide OPENAI_API_KEY\n")
 
     # 1. Initialize the system: Try to load existing embeddings from ./rag_data
     initialize_rag_system()

@@ -1,9 +1,15 @@
 from dotenv import load_dotenv
 import os, json
+from gradio_client import Client
 import numpy as np
 import faiss
 from fastembed import TextEmbedding
-from ollama import Client
+try:
+    from ollama import Client as OllamaClient
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OllamaClient = None  # type: ignore
+    OLLAMA_AVAILABLE = False
 from tqdm.auto import tqdm
 import pickle
 import hashlib
@@ -12,11 +18,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import fitz  # PyMuPDF
 import docx
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import re
 import uuid
 import faiss
-from ollama import Client
 import gradio as gr
 import socket
 
@@ -89,25 +94,40 @@ TOKEN_LIMIT_MAX = 2048          # Absolute maximum to prevent runaway responses
 ENABLE_WEB_SEARCH = os.getenv("ENABLE_WEB_SEARCH", "false").lower() in ("true", "1", "yes")
 
 # LLM Backend Configuration
-LLM_BACKEND = os.getenv("LLM_BACKEND", "auto")  # Options: auto, ollama, huggingface, openai, none
+# Smart default: use 'auto' to auto-detect available backends
+# This prevents hard-coding 'huggingface' when HF_TOKEN might not be set
+LLM_BACKEND = os.getenv("LLM_BACKEND", "auto")  # Options: huggingface, openai, ollama, auto, none
 
 # Local LLMs via Ollama
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "smollm2:360m")
 OLLAMA_MODEL_CLOUD = os.getenv("OLLAMA_MODEL_CLOUD", "gpt-oss:20b-cloud")
 OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", None)  # Required for cloud models
-client = Client(host=OLLAMA_BASE_URL)
+
+client: Optional[OllamaClient] = None
+if OLLAMA_AVAILABLE:
+    try:
+        client = OllamaClient(host=OLLAMA_BASE_URL)
+    except Exception as ollama_init_error:
+        print(f"⚠️  Ollama client unavailable: {ollama_init_error}")
+        client = None
 
 # HuggingFace Inference API for LLM
 HF_LLM_MODEL = os.getenv("HF_LLM_MODEL", "HuggingFaceTB/SmolLM2-360M-Instruct")
-hf_llm_client = None
-if HF_AVAILABLE and HF_TOKEN:
-    hf_llm_client = InferenceClient(token=HF_TOKEN)
+hf_llm_client: Optional[InferenceClient] = None
+if HF_AVAILABLE:
+    try:
+        hf_llm_client = InferenceClient(token=HF_TOKEN)
+    except Exception as hf_client_error:
+        print(f"⚠️  Hugging Face LLM client unavailable: {hf_client_error}")
+        hf_llm_client = None
 
 # print(f"Using Ollama model: {OLLAMA_MODEL_CLOUD}")
 # print(f"OLLAMA_API_KEY configured: {bool(OLLAMA_API_KEY)}")
 
 # Initialize embedding client based on chosen method
+hf_client: Optional[InferenceClient] = None
+HF_MODEL = os.getenv("HF_EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
 if EMBEDDING_METHOD == "voyage" and VOYAGE_AVAILABLE and VOYAGE_API_KEY:
     voyage_client = voyageai.Client(api_key=VOYAGE_API_KEY)
     EMBEDDING_DIM = 1024  # voyage-2 dimension
@@ -117,10 +137,18 @@ elif EMBEDDING_METHOD == "openai" and OPENAI_AVAILABLE and OPENAI_API_KEY:
     EMBEDDING_DIM = 1536  # text-embedding-3-small dimension
     # print("Using OpenAI embeddings (1536-dim)")
 elif EMBEDDING_METHOD == "huggingface" and HF_AVAILABLE and HF_TOKEN:
-    hf_client = InferenceClient(provider="hf-inference", api_key=HF_TOKEN)
-    HF_MODEL = os.getenv("HF_EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
-    EMBEDDING_DIM = 768  # bge-base dimension
-    # print(f"Using HuggingFace Inference API with {HF_MODEL} (768-dim)")
+    try:
+        hf_client = InferenceClient(token=HF_TOKEN)
+        HF_MODEL = os.getenv("HF_EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
+        EMBEDDING_DIM = 768  # bge-base dimension
+        # print(f"Using HuggingFace Inference API with {HF_MODEL} (768-dim)")
+    except Exception as hf_embed_error:
+        print(f"⚠️  HuggingFace embedding client failed to initialize: {hf_embed_error}")
+        print(f"⚠️  Falling back to local FastEmbed")
+        hf_client = None
+        embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+        EMBEDDING_DIM = 384
+        EMBEDDING_METHOD = "fastembed"
 else:
     # Fallback to local fastembed
     embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
@@ -223,7 +251,7 @@ class ParallelHFEmbedder:
         self.model = model
         self.api_key = api_key
         self.num_workers = num_workers
-        self.client = InferenceClient(provider="hf-inference", api_key=api_key)
+        self.client = InferenceClient(token=api_key)
     
     def embed_batch(self, texts: list[str]) -> np.ndarray:
         """Embed multiple texts in parallel."""
@@ -557,7 +585,7 @@ def embed_texts_optimized(texts: list[str], batch_size: int = 100,
                 return all_embeddings
     
     # Embed uncached texts
-    if use_parallel and EMBEDDING_METHOD == "huggingface" and HF_AVAILABLE and HF_TOKEN:
+    if use_parallel and EMBEDDING_METHOD == "huggingface" and hf_client is not None:
         print(f"Embedding {len(uncached_texts)} texts using parallel HuggingFace (4 workers)...")
         parallel_embedder = ParallelHFEmbedder(HF_MODEL, HF_TOKEN, num_workers=4)
         new_embeddings = parallel_embedder.embed_batch(uncached_texts)
@@ -575,7 +603,7 @@ def embed_texts_optimized(texts: list[str], batch_size: int = 100,
             elif EMBEDDING_METHOD == "openai":
                 result = openai_client.embeddings.create(input=batch, model="text-embedding-3-small")
                 batch_embeddings = np.array([e.embedding for e in result.data], dtype="float32")
-            elif EMBEDDING_METHOD == "huggingface":
+            elif EMBEDDING_METHOD == "huggingface" and hf_client is not None:
                 batch_embeddings = []
                 for text in batch:
                     result = hf_client.feature_extraction(text, model=HF_MODEL)
@@ -584,6 +612,8 @@ def embed_texts_optimized(texts: list[str], batch_size: int = 100,
                         embedding = embedding[0]
                     batch_embeddings.append(embedding)
                 batch_embeddings = np.array(batch_embeddings, dtype="float32")
+            elif EMBEDDING_METHOD == "huggingface" and hf_client is None:
+                raise RuntimeError("HuggingFace embeddings requested but hf_client is unavailable. Check HF_TOKEN or huggingface_hub installation.")
             else:  # fastembed
                 vecs = list(embedder.embed(batch))
                 batch_embeddings = np.array([np.asarray(v, dtype="float32") for v in vecs])
@@ -949,10 +979,14 @@ def retrieve_documents_hybrid(query: str, vector_store, metadata_store,
 try:
     client
 except NameError:
-    client = Client(host=OLLAMA_BASE_URL)
+    try:
+        client = Client(host=OLLAMA_BASE_URL)
+    except Exception as e:
+        print(f"⚠️  Warning: Could not initialize Ollama client: {e}")
+        client = None
 
 
-def generate_answer(query: str, retrieved_chunks: list, model_name: str = None, stream: bool = False, backend: str = None):
+def generate_answer(query: str, retrieved_chunks: list, model_name: str = None, stream: bool = False, backend: str = None, verbose: bool = False):
     """
     Generate an answer using configured LLM backend (Ollama, HuggingFace, or OpenAI).
 
@@ -968,19 +1002,30 @@ def generate_answer(query: str, retrieved_chunks: list, model_name: str = None, 
         model_name: Override model name (optional)
         stream: Enable streaming response (optional)
         backend: Override backend (ollama, huggingface, openai, or None for auto)
+        verbose: Print backend selection info (optional)
     """
     # Determine backend
     if backend is None:
         backend = LLM_BACKEND
     
     if backend == "auto":
-        # Auto-detect: prefer HF if token available, fallback to Ollama
-        if HF_AVAILABLE and HF_TOKEN and hf_llm_client:
+        # Auto-detect: prefer HF if available, then OpenAI, finally Ollama
+        # CRITICAL: Check if client is actually initialized (not None), not just if library is available
+        if hf_llm_client is not None:
             backend = "huggingface"
+            if verbose:
+                print("✓ Auto-detected backend: HuggingFace Inference API")
         elif OPENAI_AVAILABLE and OPENAI_API_KEY:
             backend = "openai"
-        else:
+            if verbose:
+                print("✓ Auto-detected backend: OpenAI")
+        elif client is not None:
+            # Only use Ollama if client was successfully initialized
             backend = "ollama"
+            if verbose:
+                print("✓ Auto-detected backend: Ollama (local)")
+        else:
+            return "❌ Error: No LLM backend available. Please configure HF_TOKEN, OPENAI_API_KEY, or ensure Ollama is running."
     
     if model_name is None:
         if backend == "huggingface":
@@ -1016,8 +1061,8 @@ def generate_answer(query: str, retrieved_chunks: list, model_name: str = None, 
 
     # ===== HuggingFace Inference API Backend =====
     if backend == "huggingface":
-        if not (HF_AVAILABLE and HF_TOKEN and hf_llm_client):
-            return "❌ Error: HuggingFace backend requested but HF_TOKEN not configured or huggingface_hub not installed."
+        if not (HF_AVAILABLE and hf_llm_client is not None):
+            return "❌ Error: HuggingFace backend requested but huggingface_hub is unavailable or HF_TOKEN is missing. Set an HF token in the environment."
         
         try:
             messages = [
@@ -1025,8 +1070,33 @@ def generate_answer(query: str, retrieved_chunks: list, model_name: str = None, 
                 {"role": "user", "content": user},
             ]
             
-            # Use HF Inference API
-            response = hf_llm_client.chat_completion(
+            # Compatibility layer: try new API first, fall back to old API
+            def invoke_hf(messages, model, max_tokens, temperature, stream=False):
+                """Try both new and old HuggingFace API methods."""
+                try:
+                    # Try new API (chat.completions.create)
+                    if hasattr(hf_llm_client, 'chat') and hasattr(hf_llm_client.chat, 'completions'):
+                        return hf_llm_client.chat.completions.create(
+                            messages=messages,
+                            model=model,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            stream=stream
+                        )
+                except (AttributeError, Exception):
+                    pass
+                
+                # Fall back to old API (chat_completion)
+                return hf_llm_client.chat_completion(
+                    messages=messages,
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stream=stream
+                )
+            
+            # Use HF Inference API with compatibility layer
+            response = invoke_hf(
                 messages=messages,
                 model=model_name,
                 max_tokens=num_predict,
@@ -1048,11 +1118,12 @@ def generate_answer(query: str, retrieved_chunks: list, model_name: str = None, 
                 except Exception as stream_err:
                     print(f"\n⚠️  Streaming failed: {stream_err}")
                     # Fallback: try non-streaming
-                    response = hf_llm_client.chat_completion(
+                    response = invoke_hf(
                         messages=messages,
                         model=model_name,
                         max_tokens=num_predict,
-                        temperature=0.2
+                        temperature=0.2,
+                        stream=False
                     )
             
             # Non-streaming response
@@ -1099,14 +1170,21 @@ def generate_answer(query: str, retrieved_chunks: list, model_name: str = None, 
             return f"❌ Error with OpenAI API: {e}"
     
     # ===== Ollama Backend (default) =====
+    # Check if Ollama client is available
+    if client is None:
+        return "❌ Error: Ollama backend requested but Ollama is not running or accessible. Please start Ollama or use a different backend (HuggingFace or OpenAI)."
+    
     # Decide which client to use
     # If using cloud model name, ensure API key exists
     if model_name == OLLAMA_MODEL_CLOUD:
         if not OLLAMA_API_KEY:
-            raise ValueError("OLLAMA_API_KEY is not set but cloud model was requested. Set OLLAMA_API_KEY or use the local model.")
+            return "❌ Error: OLLAMA_API_KEY is not set but cloud model was requested. Set OLLAMA_API_KEY or use the local model."
         # create a client configured for cloud (keep default client for local)
-        cloud_client = Client(host="https://ollama.com", headers={"Authorization": "Bearer " + OLLAMA_API_KEY})
-        chosen_client = cloud_client
+        try:
+            cloud_client = Client(host="https://ollama.com", headers={"Authorization": "Bearer " + OLLAMA_API_KEY})
+            chosen_client = cloud_client
+        except Exception as e:
+            return f"❌ Error: Could not connect to Ollama cloud: {e}"
     else:
         chosen_client = client
 
@@ -1318,7 +1396,7 @@ def execute_query(query: str, vector_store: VectorStore, metadata_store: Metadat
     if verbose:
         print(f"Generating answer with backend: {backend}, model: {model_name}")
     
-    raw_response = generate_answer(query, retrieved_chunks, model_name=model_name, stream=False, backend=backend)
+    raw_response = generate_answer(query, retrieved_chunks, model_name=model_name, stream=False, backend=backend, verbose=verbose)
     answer_text = extract_content(raw_response)
     
     # Format with sources
