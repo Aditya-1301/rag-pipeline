@@ -113,11 +113,11 @@ if OLLAMA_AVAILABLE:
         client = None
 
 # HuggingFace Inference API for LLM
-HF_LLM_MODEL = os.getenv("HF_LLM_MODEL", "HuggingFaceTB/SmolLM2-360M")
+HF_LLM_MODEL = os.getenv("HF_LLM_MODEL", "meta-llama/Llama-3.2-1B-Instruct")
 hf_llm_client: Optional[InferenceClient] = None
 if HF_AVAILABLE:
     try:
-        hf_llm_client = InferenceClient(token=HF_TOKEN)
+        hf_llm_client = InferenceClient(api_key=HF_TOKEN)
     except Exception as hf_client_error:
         print(f"⚠️  Hugging Face LLM client unavailable: {hf_client_error}")
         hf_llm_client = None
