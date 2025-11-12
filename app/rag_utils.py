@@ -113,7 +113,7 @@ if OLLAMA_AVAILABLE:
         client = None
 
 # HuggingFace Inference API for LLM
-HF_LLM_MODEL = os.getenv("HF_LLM_MODEL", "HuggingFaceTB/SmolLM2-360M-Instruct")
+HF_LLM_MODEL = os.getenv("HF_LLM_MODEL", "HuggingFaceTB/SmolLM2-360M")
 hf_llm_client: Optional[InferenceClient] = None
 if HF_AVAILABLE:
     try:
